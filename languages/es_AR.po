@@ -1,0 +1,2 @@
+msgid "Investor Type"
+msgstr "Tipo de Inversor"

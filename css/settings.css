@@ -1,0 +1,22 @@
+.fobit-investor-type {
+	margin-top: 1em;
+}
+
+.fobit-investor-type input {
+	height: 28px;
+	line-height: 28px;
+}
+
+.fobit-investor-type-code,
+.fobit-investor-type-entrance-commision,
+.fobit-investor-type-profit-commision {
+	width: 15%;
+}
+
+.fobit-investor-type-description {
+	width: calc( 55% - 85px ); 
+}
+
+.fobit-investor-type .button-secondary {
+	width: 75px;
+}
