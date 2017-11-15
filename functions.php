@@ -2,6 +2,49 @@
 require_once __DIR__ . '/inc/roles.php';
 require_once __DIR__ . '/inc/simplify.php';
 
+function fobit_get_movements( $user_id, $type = 'any' ) {
+	$parameters = array(
+		'post_type'      => 'fobit_cashflow',
+		'posts_per_page' => -1,
+		'author'         => $user_id,
+		'order'          => 'asc',
+	);
+
+	if ( 'any' !== $type ) {
+		$parameters['meta_key']   = 'fobit_cashflow_type';
+		$parameters['meta_value'] = $type;
+	}
+
+	$query = new WP_Query( $parameters );
+
+	return $query->posts;
+}
+
+function fobit_get_movements_total( $user_id, $type = 'any' ) {
+	$movements = fobit_get_movements( $user_id, $type );
+	$total     = 0;
+
+	foreach ( $movements as $movement ) {
+		$type   = get_post_meta( $movement->ID, 'fobit_cashflow_type', true );
+		$amount = get_post_meta( $movement->ID, 'fobit_cashflow_amount', true );
+
+		if ( 'deposit' === $type ) {
+			$total += $amount;
+		} else {
+			$total -= $amount;
+		}
+	}
+
+	return $total;
+}
+
+function fobit_get_cashflow_types() {
+	return array(
+		'deposit'    => __( 'Deposit', 'fobit' ),
+		'withdrawal' => __( 'Withdrawal', 'fobit' ),
+	);
+}
+
 function fobit_user_profile( $user ) {
 	wp_nonce_field( 'fobit_user_profile_update', 'fobit_user_profile_update_nonce' );
 
@@ -25,27 +68,34 @@ function fobit_user_profile( $user ) {
 }
 
 function fobit_user_profile_update( $user_id ) {
-	if ( ! isset( $_POST['fobit_user_profile_update_nonce'] ) ) {
-		return false;
-	}
-
-	$nonce = sanitize_text_field( wp_unslash( $_POST['fobit_user_profile_update_nonce'] ) );
-
-	if ( ! wp_verify_nonce( $nonce, 'fobit_user_profile_update' ) ) {
-		return false;
-	}
-
-	if ( ! current_user_can( 'edit_user', $user_id ) ) {
-		return false;
-	}
-
-	if ( isset( $_POST['fobit_investor_type'] ) ) {
-		$investor_types = fobit_get_investor_types();
-		$investor_type  = sanitize_text_field( wp_unslash( $_POST['fobit_user_profile_update_nonce'] ) );
-
-		if ( in_array( $investor_type, $investor_types ) ) {
-			update_user_meta( $user_id, 'fobit_investor_type', $investor_type );
+	try {
+		if ( ! isset( $_POST['fobit_user_profile_update_nonce'] ) ) {
+			throw new Exception();
 		}
+
+		$nonce = sanitize_text_field( wp_unslash( $_POST['fobit_user_profile_update_nonce'] ) );
+
+		if ( ! wp_verify_nonce( $nonce, 'fobit_user_profile_update' ) ) {
+			throw new Exception();
+		}
+
+		if ( ! current_user_can( 'edit_user', $user_id ) ) {
+			throw new Exception();
+		}
+
+		if ( isset( $_POST['fobit_investor_type'] ) ) {
+			$investor_types = fobit_get_investor_types();
+			$investor_type  = sanitize_text_field( wp_unslash( $_POST['fobit_investor_type'] ) );
+
+			foreach ( $investor_types as $possible_investor_type ) {
+				if ( $possible_investor_type['code'] === $investor_type ) {
+					update_user_meta( $user_id, 'fobit_investor_type', $investor_type );
+					
+					break;
+				}
+			}
+		}
+	} catch( Exception $e ) {
 	}
 }
 
@@ -139,7 +189,7 @@ add_action( 'admin_enqueue_scripts', function( $hook ) {
 		get_template_directory_uri() . '/css/settings.css'
 	);
 
-	if ( 'settings_page_fobit' === $hook ) {
+	if ( 'settings_page_fobit_settings' === $hook ) {
 		wp_enqueue_style( 'fobit-settings' );
 
 		wp_enqueue_script( 'fobit-settings' );
@@ -175,13 +225,51 @@ add_action( 'init', function() {
 	register_post_type(
 		'fobit_cashflow',
 		array(
-			'label'  => __( 'Cashflow', 'fobit' ),
-			'labels' => array(
+			'label'                => __( 'Cashflow', 'fobit' ),
+			'labels'               => array(
+				'name'               => __( 'Cashflow', 'fobit' ),
+				'singular_name'      => __( 'Cashflow', 'fobit' ),
+				'add_new'            => __( 'Add new movement', 'fobit' ),
+				'add_new_item'       => __( 'Add New Movement', 'fobit' ),
+				'edit_item'          => __( 'Edit Movement', 'fobit' ),
+				'view_item'          => __( 'View Movement', 'fobit' ),
+				'view_items'         => __( 'View Movements', 'fobit' ),
+				'search_items'       => __( 'Search Movements', 'fobit' ),
+				'not_found'          => __( 'No movements found', 'fobit' ),
+				'not_found_in_trash' => __( 'No movements found in trash', 'fobit' ),
+				'all_items'          => __( 'All movements', 'fobit' ),
 			),
-			'public'      => false,
-			'show_ui'     => true,
-			'menu_icon'   => 'dashicons-upload',
-			'supports'    => array( 'author' ),
+			'public'               => false,
+			'show_ui'              => true,
+			'menu_icon'            => 'dashicons-upload',
+			'register_meta_box_cb' => function() {
+				add_meta_box(
+					'fobit_cashflow',
+					__( 'Movement Information', 'fobit' ),
+					function( $post ) {
+						wp_nonce_field( 'fobit_cashflow', 'fobit_cashflow_nonce' );
+
+						$types          = fobit_get_cashflow_types();
+						?>
+<p>
+	<label for="fobit_cashflow_type"><?php esc_html_e( 'Type', 'fobit' ); ?></label>
+	<select name="fobit_cashflow_type" id="fobit_cashflow_type" class="widefat">
+		<?php foreach ( $types as $type => $caption ) { ?>
+		<option value="<?php echo esc_attr( $type ); ?>"<?php selected( $type, get_post_meta( $post->ID, 'fobit_cashflow_type', true ) ); ?>><?php echo esc_html( $caption ); ?></option>
+		<?php } ?>
+	</select>
+</p>
+<p>
+	<label for="fobit_cashflow_amount"><?php esc_html_e( 'Amount', 'fobit' ); ?></label>
+	<input id="fobit_cashflow_amount" name="fobit_cashflow_amount" type="number" step="0.01" min="0" value="<?php echo esc_attr( get_post_meta( $post->ID, 'fobit_cashflow_amount', true ) ); ?>" class="widefat" />
+</p>
+						<?php
+					}, 
+					'fobit_cashflow',
+					'normal'
+				);
+			},
+			'supports'             => array( 'author' ),
 		)
 	);
 } );
@@ -193,3 +281,114 @@ add_action( 'wp', function() {
 		auth_redirect();
 	}
 } );
+
+add_filter( 'gettext', function( $translated, $original, $domain ) {
+	switch ( $original ) {
+		case 'Author':
+			$translated = __( 'User', 'fobit' );
+
+			break;
+	}
+
+	return $translated;
+}, 10, 3 );
+
+add_filter( 'wp_insert_post_data', function( $data, $postarr ) {
+	try {
+		if ( ! isset( $_POST['fobit_cashflow_nonce'] ) ) {
+			throw new Exception();
+		}
+
+		$nonce = sanitize_text_field( wp_unslash( $_POST['fobit_cashflow_nonce'] ) );
+
+		if ( ! wp_verify_nonce( $nonce, 'fobit_cashflow' ) ) {
+			throw new Exception();
+		}
+
+		$post_id = $postarr['ID'];
+
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			throw new Exception();
+		}
+
+		$amount = 0;
+		$type   = null;
+
+		if ( isset( $_POST['fobit_cashflow_type'] ) ) {
+			$types = fobit_get_cashflow_types();
+
+			$possible_type = sanitize_text_field( wp_unslash( $_POST['fobit_cashflow_type'] ) );
+
+			if ( isset( $types[ $possible_type ] ) ) {
+				$type = $possible_type;
+			}
+		}
+
+		if ( isset( $_POST['fobit_cashflow_amount'] ) ) {
+			$amount = abs( floatval( wp_unslash( $_POST['fobit_cashflow_amount'] ) ) );
+		}
+
+		update_post_meta( $post_id, 'fobit_cashflow_type', $type );
+		update_post_meta( $post_id, 'fobit_cashflow_amount', $amount );
+
+		$data['post_title'] = sprintf( __( '$%1s %2s', 'fobit' ), number_format( $amount ), $type ); 
+	} catch( Exception $e ) {
+	}
+
+	return $data;
+}, 10, 2 );
+
+add_filter( 'manage_users_columns', function( $columns ) {
+	$columns['fobit_investor_type']  = __( 'Investor Type', 'fobit' );
+	$columns['fobit_first_movement'] = __( 'First Movement', 'fobit' );
+	$columns['fobit_deposits']       = __( 'Deposits', 'fobit' );
+	$columns['fobit_withdrawals']    = __( 'Withdrawals', 'fobit' );
+
+	unset( $columns['posts'] );
+
+	return $columns;
+} );
+
+add_filter( 'manage_users_custom_column', function( $value, $column_name, $user_id ) {
+	$investor_types = fobit_get_investor_types();
+
+	switch ( $column_name ) {
+		case 'fobit_investor_type':
+			$investor_type = get_the_author_meta( 'fobit_investor_type', $user_id );
+
+			foreach ( $investor_types as $possible_investor_type ) {
+				$code = $possible_investor_type['code'];
+
+				if ( $code === $investor_type ) {
+					$value = $possible_investor_type['description'];
+
+					break;
+				}
+			}
+
+			break;
+		case 'fobit_first_movement':
+			$movements = fobit_get_movements( $user_id );
+
+			if ( ! empty( $movements ) ) {
+				$date = $movements[0]->post_date;
+
+				$value = date( get_option( 'date_format' ), strtotime( $date ) ); 
+			} else {
+				$value = __( 'This user has not registered moments yet.', 'fobit' );
+			}
+			break;
+		case 'fobit_deposits':
+			$total = fobit_get_movements_total( $user_id, 'deposit' );
+
+			$value = sprintf( '$%s', number_format( $total ) );
+			break;
+		case 'fobit_withdrawals':
+			$total = fobit_get_movements_total( $user_id, 'withdrawal' );
+
+			$value = sprintf( '$%s', number_format( $total * -1 ) );
+			break;
+	}
+
+	return $value;
+}, 10, 3 );

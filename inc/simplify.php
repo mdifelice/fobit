@@ -16,9 +16,11 @@ add_action( 'admin_menu', function() {
 	remove_menu_page( 'index.php' );
 	remove_menu_page( 'upload.php' );
 	remove_menu_page( 'edit-comments.php' );
-	remove_menu_page( 'themes.php' );
-	remove_menu_page( 'plugins.php' );
 	remove_menu_page( 'tools.php' );
+
+	remove_submenu_page( 'themes.php', 'customize.php' );
+	remove_submenu_page( 'themes.php', 'widgets.php' );
+	remove_submenu_page( 'themes.php', 'nav-menus.php' );
 
 	remove_submenu_page( 'options-general.php', 'options-writing.php' );
 	remove_submenu_page( 'options-general.php', 'options-reading.php' );
